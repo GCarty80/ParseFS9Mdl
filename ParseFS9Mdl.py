@@ -3,7 +3,10 @@ import json
 
 mdl_dir_to_parse = "D:\\Flight\\FSX\\SimObjects\\Airplanes\\HJG Boeing KC-135A Early v6.1 BETA\\model.KC-135A_Early"
 
-var_type_from_number = {0:"CUSTOM", 1:"FLOAT32", 2:"UINT32", 4:"UINT16"}
+var_type_from_number = {1:["FLOAT32",4], 2:["UINT32",4], 4:["UINT16",2], 6:["FLAGS16",2], 7:["SINT16",2]}
+
+with open("fs2004_vars.json") as f:
+    fs2004_vars_dict = json.load(f)
 
 class BadBlockException(Exception):
     pass
@@ -35,22 +38,28 @@ def parseBytes(input_bytes):
             continue
         elif block_id == "DICT":
             records = []
-            custom_record_string = None
             for record in range(block_size//28):
                 record_bytes = input_bytes[8+record*28:36+record*28]
-                type_no = var_type_from_number[int.from_bytes(record_bytes[:4], "little")]
-                if type_no == "CUSTOM":
-                    if custom_record_string is None:
-                        custom_record_string = ""
-                    custom_record_string += record_bytes[4:].decode("latin1")
+                type_no = int.from_bytes(record_bytes[:4], "little")
+                if type_no == 0:
+                    if len(records) > 0:
+                        if "string" not in records[-1]:
+                            records[-1]["string"] = ""
+                        records[-1]["string"] += record_bytes[4:].decode("latin1").rstrip("\00")
                 else:
-                    if custom_record_string is not None:
-                        records.append({"type":"CUSTOM", "string":custom_record_string.rstrip("\00")})
-                        custom_record_string = None
-                    records.append({"type":type_no, "offset":int.from_bytes(record_bytes[4:8], "little"),"spacing":int.from_bytes(record_bytes[8:12], "little"), "id":makeGuid(record_bytes[12:])})
-            if custom_record_string is not None:
-                records.append({"type":"CUSTOM", "string":custom_record_string.rstrip("\00")})
-                custom_record_string = None
+                    guid = makeGuid(record_bytes[12:])
+                    data_size = int.from_bytes(record_bytes[8:12], "little")
+                    (type_name, type_size) = var_type_from_number.get(type_no, ["????", 0])
+                    if (type_size != 0) and (data_size != type_size):
+                        raise BadBlockException("Record found with size specified as %d bytes, but type is specified as %d which takes %d bytes!"%(data_size, type_name, type_size))
+                    new_record = {"type":type_name, "offset":int.from_bytes(record_bytes[4:8], "little"), "id":guid, "fs_name":fs2004_vars_dict.get(guid, {"fs_name":"<custom>"})["fs_name"]}
+                    lookup_entry = fs2004_vars_dict.get(guid, None)
+                    if lookup_entry is not None:
+                        if lookup_entry["type"] != type_name:
+                            raise BadBlockException("Record found with type specified as '%s' but variable '%s' is of type '%s'!"%(type_name, lookup_entry["fs_name"], lookup_entry["type"]))
+                        new_record["fs_name"] = lookup_entry["fs_name"]
+                        new_record["description"] = lookup_entry["description"]           
+                    records.append(new_record)
             output.append({"block":"DICT", "num_entries":len(records), "records":records})
             del input_bytes[:8+block_size]
             continue
