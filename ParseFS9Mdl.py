@@ -31,9 +31,25 @@ def parseBytes(input_bytes):
             continue
         elif block_id == "MDL8":
             if input_bytes[4:8].decode("latin1") != "MDLH":
-                raise BadBlockException("MDL8 header block must begin 'MDLH'!")
+                raise BadBlockException("Bad MDL8 header block: must begin 'MDLH'!")
             block_size = int.from_bytes(input_bytes[8:12], "little")
-            output.append({"block":"MDL8_header", "raw_data":hexDump(input_bytes[12:12+block_size])})
+            if block_size != 32:
+                raise BadBlockException("Bad MDL8 header block: must be 32 bytes after the 'MDLH' and size!")
+            if int.from_bytes(input_bytes[12:16], "little") != 0:
+                raise BadBlockException("Bad MDL8 header block: first DWORD must be zero!")
+            if int.from_bytes(input_bytes[16:20], "little") != 0:
+                raise BadBlockException("Bad MDL8 header block: second DWORD must be zero!")
+            model_radius = int.from_bytes(input_bytes[20:24], "little")
+            if int.from_bytes(input_bytes[24:28], "little") != 0:
+                raise BadBlockException("Bad MDL8 header block: fourth DWORD must be zero!")
+            if int.from_bytes(input_bytes[28:32], "little") != 0:
+                raise BadBlockException("Bad MDL8 header block: fifth DWORD must be zero!")
+            after_offsets = int.from_bytes(input_bytes[32:36], "little")
+            if input_bytes[36:40].decode("latin1") != "FS80":
+                raise BadBlockException("Bad MDL8 header block: seventh DWORD must be 'FS80'!")
+            if int.from_bytes(input_bytes[40:44], "little") != 2304:
+                raise BadBlockException("Bad MDL8 header block: eighth DWORD must be 2304!")
+            output.append({"block":"MDL8_header", "model_radius":model_radius, "after_offsets":after_offsets})
             del input_bytes[:12+block_size]
             continue
         elif block_id == "DICT":
@@ -48,27 +64,33 @@ def parseBytes(input_bytes):
                         records[-1]["string"] += record_bytes[4:].decode("latin1").rstrip("\00")
                 else:
                     guid = makeGuid(record_bytes[12:])
+                    data_offset = int.from_bytes(record_bytes[4:8], "little")
                     data_size = int.from_bytes(record_bytes[8:12], "little")
                     (type_name, type_size) = var_type_from_number.get(type_no, ["????", 0])
                     if (type_size != 0) and (data_size != type_size):
                         raise BadBlockException("Record found with size specified as %d bytes, but type is specified as %d which takes %d bytes!"%(data_size, type_name, type_size))
-                    new_record = {"type":type_name, "offset":int.from_bytes(record_bytes[4:8], "little"), "id":guid, "fs_name":fs2004_vars_dict.get(guid, {"fs_name":"<custom>"})["fs_name"]}
+                    new_record = {"type":type_name, "offset":data_offset, "id":guid, "fs_name":fs2004_vars_dict.get(guid, {"fs_name":"<custom>"})["fs_name"]}
                     lookup_entry = fs2004_vars_dict.get(guid, None)
                     if lookup_entry is not None:
                         if lookup_entry["type"] != type_name:
                             raise BadBlockException("Record found with type specified as '%s' but variable '%s' is of type '%s'!"%(type_name, lookup_entry["fs_name"], lookup_entry["type"]))
                         new_record["fs_name"] = lookup_entry["fs_name"]
-                        new_record["description"] = lookup_entry["description"]           
+                        new_record["description"] = lookup_entry["description"]
                     records.append(new_record)
             output.append({"block":"DICT", "num_entries":len(records), "records":records})
             del input_bytes[:8+block_size]
             continue
         elif block_id == "BBOX":
-            output.append({"block":"BBOX", "raw_data":hexDump(input_bytes[8:8+block_size])})
+            if block_size != 36:
+                raise BadBlockException("Bad BBOX header block: must be 36 bytes after the size!")
+            for i in range(block_size):
+                if input_bytes[8+i] != 0:
+                    raise BadBlockException("Bad BBOX header block: must only contain zeros after the size!")
+            output.append({"block":"BBOX"})
             del input_bytes[:8+block_size]
             continue
         elif block_id == "ISFT":
-            output.append({"block":"ISFT", "creator":input_bytes[8:8+block_size].decode("latin1").rstrip("\0")})
+            output.append({"block":"ISFT", "block_size":block_size, "creator":input_bytes[8:8+block_size].decode("latin1").rstrip("\0")})
             del input_bytes[:8+block_size]
             continue
         elif block_id == "BGL ":
