@@ -10,12 +10,6 @@ with open("fs2004_vars.json") as f:
 
 class BadBlockException(Exception):
     pass
-
-def hexDump(bytes_to_dump):
-    output = ""
-    for byte in bytes_to_dump:
-        output = "%s%02x"%(output, byte)
-    return output
     
 def makeGuid(input_bytes):
     return "%08X-%04X-%04X-%04X-%012X"%(int.from_bytes(input_bytes[:4], "little"), int.from_bytes(input_bytes[4:6], "little"), int.from_bytes(input_bytes[6:8], "little"), int.from_bytes(input_bytes[8:10], "big"), int.from_bytes(input_bytes[10:], "big"))
@@ -94,7 +88,7 @@ def parseBytes(input_bytes):
             del input_bytes[:8+block_size]
             continue
         elif block_id == "BGL ":
-            output.append({"block":"DICT", "raw_data":"BGL DATA", "size":block_size})
+            output.append({"block":"BGL ", "raw_data":"BGL DATA", "size":block_size, "rawdata":input_bytes[8:8+block_size].hex(" ", -128).upper().split(" ")})
             del input_bytes[:8+block_size]
             continue
         raise BadBlockException("Unrecognized block type '%s'"%(block_id))
