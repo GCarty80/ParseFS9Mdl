@@ -10,9 +10,102 @@ with open("fs2004_vars.json") as f:
 
 class BadBlockException(Exception):
     pass
+
+bgl_record_types = {0x06:["BGL_SPNT",
+                            [("x","SINT16"),
+                             ("y","SINT16"),
+                             ("z","SINT16")]
+                         ],
+                    0x07:["BGL_CPNT",
+                            [("x","SINT16"),
+                             ("y","SINT16"),
+                             ("z","SINT16")]
+                         ],
+                    0x08:["BGL_CLOSURE",[]],
+                    0x0d:["BGL_JUMP",
+                            [("displacement","SINT16")]
+                         ],
+                    0x22:["BGL_RETURN",[]],
+                    0x23:["BGL_CALL",
+                            [("displacement","SINT16")]
+                         ],
+                    0x34:["BGL_SUPER_SCALE",
+                            [("jump_if_fail","SINT16"),
+                             ("view_range","UINT16"),
+                             ("model_size","UINT16"),
+                             ("super_scale","UINT16")]
+                         ],
+                    0x39:["BGL_IFMASK",
+                            [("jump_if_fail","SINT16"),
+                             ("var","VAR16"),
+                             ("mask","VAR16")]
+                         ],
+                    0x3a:["BGL_VPOSITION",
+                            [("jump_if_fail","SINT16"),
+                             ("view_range","UINT16"),
+                             ("model_size","UINT16"),
+                             ("index","ZERO2"),
+                             ("LATLONGLAT_offset","VAR16")]
+                         ],
+                    0x3b:["BGL_VINSTANCE",
+                            [("offset","SINT16"),
+                             ("call","VAR16")]
+                         ],
+                    0x40:["BGL_SHADOW_VPOSITION",
+                            [("jump_if_fail","SINT16"),
+                             ("view_range","UINT16"),
+                             ("model_size","UINT16"),
+                             ("index","ZERO2"),
+                             ("LATLONGLAT_offset","VAR16")]
+                         ],
+                    0x88:["BGL_JUMP32",
+                            [("displacement","SINT32")]
+                         ],
+                    0x8e:["BGL_VFILE_MARKER",
+                            [("offset","SINT16")]
+                         ]
+                    }
     
 def makeGuid(input_bytes):
     return "%08X-%04X-%04X-%04X-%012X"%(int.from_bytes(input_bytes[:4], "little"), int.from_bytes(input_bytes[4:6], "little"), int.from_bytes(input_bytes[6:8], "little"), int.from_bytes(input_bytes[8:10], "big"), int.from_bytes(input_bytes[10:], "big"))
+
+def bglDecode(input_bytes):
+    output_dict = {"block":"BGL ", "size":len(input_bytes), "records":[]}
+    offset = 0
+    while True:
+        bgl_record = bgl_record_types.get(input_bytes[offset], None)
+        if bgl_record is not None:
+            (bgl_record_type, bgl_record_data) = bgl_record
+            output_dict["records"].append({"#id_number":0x06, "#id_name":bgl_record_type, "#memory_offset":offset, "data":[]})
+            offset += 2
+            for (data_id, data_type) in bgl_record_data:
+                if data_type == "UINT16":
+                    output_dict["records"][-1]["data"].append({"entry":data_id,"type":"UINT16","data":int.from_bytes(input_bytes[offset:offset+2], byteorder="little", signed=False)})
+                    offset += 2
+                elif data_type == "UINT32":
+                    output_dict["records"][-1]["data"].append({"entry":data_id,"type":"UINT32","data":int.from_bytes(input_bytes[offset:offset+4], byteorder="little", signed=False)})
+                    offset += 4
+                elif data_type == "SINT16":
+                    output_dict["records"][-1]["data"].append({"entry":data_id,"type":"SINT16","data":int.from_bytes(input_bytes[offset:offset+2], byteorder="little", signed=True)})
+                    offset += 2
+                elif data_type == "SINT32":
+                    output_dict["records"][-1]["data"].append({"entry":data_id,"type":"SINT32","data":int.from_bytes(input_bytes[offset:offset+4], byteorder="little", signed=True)})
+                    offset += 4
+                elif data_type == "VAR16":
+                    output_dict["records"][-1]["data"].append({"entry":data_id,"type":"VAR16","data":"0x%04x"%(int.from_bytes(input_bytes[offset:offset+2], byteorder="little", signed=False))})
+                    offset += 2
+                elif data_type == "VAR32":
+                    output_dict["records"][-1]["data"].append({"entry":data_id,"type":"VAR32","data":"0x%08x"%(int.from_bytes(input_bytes[offset:offset+4], byteorder="little", signed=False))})
+                    offset += 4
+                elif data_type == "ZERO2":
+                    if int.from_bytes(input_bytes[offset:offset+2], "little") != 0:
+                        raise BadBlockException("%s index must be zero!"%(bgl_record_type))
+                    offset += 2
+        else:
+            print("Unrecognized BGL record: %02x"%(input_bytes[offset]))
+            break
+    output_dict["remaining_data"] = input_bytes[offset:].hex(" ", -128).upper().split(" ")
+    return output_dict
 
 def parseBytes(input_bytes):
     output = []
@@ -88,12 +181,12 @@ def parseBytes(input_bytes):
             del input_bytes[:8+block_size]
             continue
         elif block_id == "BGL ":
-            output.append({"block":"BGL ", "raw_data":"BGL DATA", "size":block_size, "rawdata":input_bytes[8:8+block_size].hex(" ", -128).upper().split(" ")})
+            output.append(bglDecode(input_bytes[8:8+block_size]))
             del input_bytes[:8+block_size]
             continue
         raise BadBlockException("Unrecognized block type '%s'"%(block_id))
     return output
-
+    
 if __name__ == "__main__":
     for mdl_file_name in os.listdir(mdl_dir_to_parse):
         if not mdl_file_name.lower().endswith(".mdl"):
