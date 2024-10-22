@@ -1,5 +1,6 @@
 import os
 import json
+import struct
 
 mdl_dir_to_parse = "D:\\Flight\\FSX\\SimObjects\\Airplanes\\HJG Boeing KC-135A Early v6.1 BETA\\model.KC-135A_Early"
 
@@ -63,6 +64,12 @@ bgl_record_types = {0x06:["BGL_SPNT",
                          ],
                     0x8e:["BGL_VFILE_MARKER",
                             [("offset","SINT16")]
+                         ],
+                    0xbc:["BGL_BEGIN",
+                            [("version","VAR32")]
+                         ],
+                    0xbd:["BGL_END",
+                            []
                          ]
                     }
     
@@ -101,6 +108,65 @@ def bglDecode(input_bytes):
                     if int.from_bytes(input_bytes[offset:offset+2], "little") != 0:
                         raise BadBlockException("%s index must be zero!"%(bgl_record_type))
                     offset += 2
+        elif input_bytes[offset] == 0x96:
+            output_dict["records"].append({"#id_number":0x96, "#id_name":"BGL_CRASH_START", "#memory_offset":offset, "data":[]})
+            crash_record_length = int.from_bytes(input_bytes[offset+2:offset+4], byteorder="little", signed=False)
+            output_dict["records"][-1]["data"].append({"entry":"length","type":"UINT16","data":crash_record_length})
+            output_dict["records"][-1]["data"].append({"entry":"ground_radius","type":"UINT16","data":int.from_bytes(input_bytes[offset+4:offset+6], byteorder="little", signed=False)})
+            output_dict["records"][-1]["data"].append({"entry":"raw_data","type":"HEXDUMP","data":input_bytes[offset+6:offset+crash_record_length].hex().upper()})
+            offset += crash_record_length
+        elif input_bytes[offset] == 0xb6:
+            num_materials = int.from_bytes(input_bytes[offset+2:offset+4], byteorder="little", signed=False)
+            output_dict["records"].append({"#id_number":0xb6, "#id_name":"BGL_MATERIAL_LIST", "#memory_offset":offset, "num_materials":num_materials, "materials":[]})
+            if int.from_bytes(input_bytes[offset+4:offset+8], "little") != 0:
+                raise BadBlockException("BGL_MATERIAL_LIST header reserved bytes must be zero!")
+            for material_index in range(num_materials):
+                output_dict["records"][-1]["materials"].append({"#index":material_index,
+                                                                "diffuse":
+                                                                    {
+                                                                        "r":struct.unpack('f', input_bytes[offset+ 8+68*material_index:offset+12+68*material_index])[0],
+                                                                        "g":struct.unpack('f', input_bytes[offset+12+68*material_index:offset+16+68*material_index])[0],
+                                                                        "b":struct.unpack('f', input_bytes[offset+16+68*material_index:offset+20+68*material_index])[0],
+                                                                        "a":struct.unpack('f', input_bytes[offset+20+68*material_index:offset+24+68*material_index])[0]
+                                                                    },
+                                                                "ambient":
+                                                                    {
+                                                                        "r":struct.unpack('f', input_bytes[offset+24+68*material_index:offset+28+68*material_index])[0],
+                                                                        "g":struct.unpack('f', input_bytes[offset+28+68*material_index:offset+32+68*material_index])[0],
+                                                                        "b":struct.unpack('f', input_bytes[offset+32+68*material_index:offset+36+68*material_index])[0],
+                                                                        "a":struct.unpack('f', input_bytes[offset+36+68*material_index:offset+40+68*material_index])[0]
+                                                                    },
+                                                                "specular":
+                                                                    {
+                                                                        "r":struct.unpack('f', input_bytes[offset+40+68*material_index:offset+44+68*material_index])[0],
+                                                                        "g":struct.unpack('f', input_bytes[offset+44+68*material_index:offset+48+68*material_index])[0],
+                                                                        "b":struct.unpack('f', input_bytes[offset+48+68*material_index:offset+52+68*material_index])[0],
+                                                                        "a":struct.unpack('f', input_bytes[offset+52+68*material_index:offset+56+68*material_index])[0]
+                                                                    },
+                                                                "emissive":
+                                                                    {
+                                                                        "r":struct.unpack('f', input_bytes[offset+56+68*material_index:offset+60+68*material_index])[0],
+                                                                        "g":struct.unpack('f', input_bytes[offset+60+68*material_index:offset+64+68*material_index])[0],
+                                                                        "b":struct.unpack('f', input_bytes[offset+64+68*material_index:offset+68+68*material_index])[0],
+                                                                        "a":struct.unpack('f', input_bytes[offset+68+68*material_index:offset+72+68*material_index])[0]
+                                                                    },
+                                                               "specular_power":struct.unpack('f', input_bytes[offset+72+68*material_index:offset+76+68*material_index])[0]
+                                                            })
+            offset += 8+num_materials*68
+        elif input_bytes[offset] == 0xb7:
+            num_textures = int.from_bytes(input_bytes[offset+2:offset+4], byteorder="little", signed=False)
+            output_dict["records"].append({"#id_number":0xb7, "#id_name":"BGL_TEXTURE_LIST", "#memory_offset":offset, "num_textures":num_textures, "textures":[]})
+            if int.from_bytes(input_bytes[offset+4:offset+8], "little") != 0:
+                raise BadBlockException("BGL_TEXTURE_LIST header reserved bytes must be zero!")
+            for texture_index in range(num_textures):
+                if int.from_bytes(input_bytes[offset+16+80*texture_index:offset+20+80*texture_index], "little") != 0:
+                    raise BadBlockException("BGL_TEXTURE_LIST texture %d reserved bytes must be zero!"%(texture_index+1))
+                output_dict["records"][-1]["textures"].append({"#index":texture_index, "category":int.from_bytes(input_bytes[offset+8+80*texture_index:offset+12+80*texture_index], byteorder="little", signed=False),
+                                                               "fallback_ARGB":"#%08x"%int.from_bytes(input_bytes[offset+12+80*texture_index:offset+16+80*texture_index], byteorder="little", signed=False),
+                                                               "texture_size":struct.unpack('f', input_bytes[offset+20+80*texture_index:offset+24+80*texture_index])[0],
+                                                               "texture_name":input_bytes[offset+24+80*texture_index:offset+88+80*texture_index].decode("latin1").rstrip("\0")
+                                                            })
+            offset += 8+num_textures*80
         else:
             print("Unrecognized BGL record: %02x"%(input_bytes[offset]))
             break
